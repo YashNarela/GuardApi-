@@ -4,7 +4,6 @@ const ExcelJS = require("exceljs");
 const Patrol = require("../models/Patrol");
 const PatrolPlan = require("../models/PatrolPlan");
 const User = require("../models/User");
-const sendEmail = require("../utils/sendEmail");
 const ApiResponse = require("../utils/apiResponse");
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -441,91 +440,32 @@ async function buildExcel(guard, data) {
   return wb.xlsx.writeBuffer();
 }
 
-// ─── Fixed report recipients ───────────────────────────────────────────────────
-
-const REPORT_RECIPIENTS = [
-  "srivatsan@rajratan.co.in",
-  "selvaraju@rajratan.co.in",
-  "it.ch@rajratan.co.in",
-  "santosh@rajratan.co.in",
-  "security.ch@rajratan.co.in",
-];
-
-// ─── Controller ────────────────────────────────────────────────────────────────
+// ─── Controller — generates and downloads report (no email) ────────────────────
 
 const sendPerformanceReportEmail = async (req, res) => {
   try {
-    const { to, guardId, startDate, endDate, shiftId, timezone } = req.body;
-
-    // Merge fixed recipients with any additional `to` from the request
-    const extraRecipients = to
-      ? (Array.isArray(to) ? to : [to])
-      : [];
-    const allRecipients = [
-      ...new Set([...REPORT_RECIPIENTS, ...extraRecipients]),
-    ];
+    const { guardId, startDate, endDate, shiftId, timezone } = req.body;
 
     if (!guardId)
-      return res
-        .status(400)
-        .json(new ApiResponse(false, "guardId is required"));
-    if (!mongoose.Types.ObjectId.isValid(guardId)) {
+      return res.status(400).json(new ApiResponse(false, "guardId is required"));
+    if (!mongoose.Types.ObjectId.isValid(guardId))
       return res.status(400).json(new ApiResponse(false, "Invalid guardId"));
-    }
 
-    const guard = await User.findOne({ _id: guardId, role: "guard" }).select(
-      "name phone email",
-    );
+    const guard = await User.findOne({ _id: guardId, role: "guard" }).select("name phone email");
     if (!guard)
       return res.status(404).json(new ApiResponse(false, "Guard not found"));
 
-    const data = await buildReportData({
-      guardId,
-      startDate,
-      endDate,
-      shiftId,
-      timezone,
-    });
+    const data = await buildReportData({ guardId, startDate, endDate, shiftId, timezone });
     const excelBuffer = await buildExcel(guard, data);
 
     const dateLabel = `${data.reportPeriod.startDate}_to_${data.reportPeriod.endDate}`;
     const filename = `performance_report_${guard.name?.replace(/\s+/g, "_") || guardId}_${dateLabel}.xlsx`;
 
-    await sendEmail({
-      to: allRecipients,
-      subject: `Guard Performance Report — ${guard.name || guardId} (${data.reportPeriod.startDate} to ${data.reportPeriod.endDate})`,
-      html: `
-        <h2>Guard Performance Report</h2>
-        <p><strong>Guard:</strong> ${guard.name || "-"}</p>
-        <p><strong>Period:</strong> ${data.reportPeriod.startDate} to ${data.reportPeriod.endDate}</p>
-        <p><strong>Overall Score:</strong> ${data.summary.overallScore.toFixed(1)}% (${data.summary.rating})</p>
-        <p><strong>Completed Rounds:</strong> ${data.summary.totalCompletedRounds} / ${data.summary.totalExpectedRounds}</p>
-        <p>Please find the detailed Excel report attached.</p>
-      `,
-      attachments: [
-        {
-          filename,
-          content: excelBuffer,
-          contentType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-      ],
-    });
-
-    return res.status(200).json(
-      new ApiResponse(true, "Performance report emailed successfully", {
-        to: allRecipients,
-        guard: { _id: guard._id, name: guard.name },
-        reportPeriod: data.reportPeriod,
-        summary: {
-          overallScore: data.summary.overallScore.toFixed(1) + "%",
-          rating: data.summary.rating,
-          completedRounds: `${data.summary.totalCompletedRounds}/${data.summary.totalExpectedRounds}`,
-        },
-      }),
-    );
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(excelBuffer);
   } catch (err) {
-    console.error("Error in sendPerformanceReportEmail:", err);
+    console.error("Error in generatePerformanceReport:", err);
     return res.status(500).json(new ApiResponse(false, err.message));
   }
 };

@@ -6,6 +6,7 @@ const path = require("path");
 const bodyParser = require('body-parser')
 
 const connectDB = require("./config/connection");
+const { startReportScheduler } = require("./utils/reportScheduler");
 require('dotenv').config()
 app.use(cors({
     origin: "*", 
@@ -32,3 +33,4 @@ app.use("/api/scheduler", require("./routes/schedulerRoutes"));
 app.listen(port, () => console.log(`Server running on ${port}`));
 
 connectDB();
+startReportScheduler();
